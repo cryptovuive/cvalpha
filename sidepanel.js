@@ -177,8 +177,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     previewContent.innerHTML = '<span class="autoreply-processing"></span> Đang tạo reply...';
 
-    // Temporarily save tone for preview
-    const tempConfig = { ...config, replyTone: currentTone, customTone: customPrompt.value };
+    // Lưu config tạm thời với tone/prompt hiện tại trước khi preview
+    const tempData = {
+      replyTone: currentTone,
+      customTone: customPrompt.value.trim(),
+      replyLanguage: language.value,
+      replyTemplate: replyTemplate.value.trim()
+    };
+    await saveConfig(tempData);
 
     chrome.runtime.sendMessage({
       action: 'generateReply',

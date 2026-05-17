@@ -13,9 +13,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('optModel').value = cfg.openaiModel || 'gpt-5.4-mini';
     document.getElementById('optSystemPrompt').value = cfg.systemPrompt || '';
     document.getElementById('optTemplate').value = cfg.replyTemplate || '';
-    document.getElementById('optMaxDaily').value = cfg.maxRepliesPerHour * 24 || 100;
+    document.getElementById('optMaxDaily').value = cfg.maxDailyReplies || (cfg.maxRepliesPerHour * 24) || 100;
     document.getElementById('optMaxHourly').value = cfg.maxRepliesPerHour || 10;
-    document.getElementById('optMinDelay').value = cfg.delayBetweenReplies || 30;
+    document.getElementById('optMinDelay').value = cfg.delayMin || 60;
   });
 
   // Load stats
@@ -35,8 +35,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       openaiModel: document.getElementById('optModel').value.trim() || 'gpt-5.4-mini',
       systemPrompt: document.getElementById('optSystemPrompt').value.trim(),
       replyTemplate: document.getElementById('optTemplate').value.trim(),
+      maxDailyReplies: parseInt(document.getElementById('optMaxDaily').value) || 100,
       maxRepliesPerHour: parseInt(document.getElementById('optMaxHourly').value) || 10,
-      delayBetweenReplies: parseInt(document.getElementById('optMinDelay').value) || 30
+      delayMin: parseInt(document.getElementById('optMinDelay').value) || 60
     };
 
     chrome.runtime.sendMessage({ action: 'saveConfig', data: cfg }, (res) => {

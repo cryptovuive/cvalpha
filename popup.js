@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     apiKey.value = cfg.openaiApiKey || '';
     language.value = cfg.replyLanguage || 'vi';
     maxPerHour.value = cfg.maxRepliesPerHour || 10;
-    delay.value = cfg.delayBetweenReplies || 30;
+    delay.value = cfg.delayMin || 60;
     blacklist.value = (cfg.blacklistKeywords || []).join(', ');
     skipReplies.checked = cfg.skipReplies !== false;
     skipOwn.checked = cfg.skipOwnReplies !== false;
@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       replyTone: currentTone,
       customTone: customTone.value.trim(),
       maxRepliesPerHour: parseInt(maxPerHour.value) || 10,
-      delayBetweenReplies: parseInt(delay.value) || 30,
+      delayMin: parseInt(delay.value) || 60,
       blacklistKeywords,
       skipReplies: skipReplies.checked,
       skipOwnReplies: skipOwn.checked

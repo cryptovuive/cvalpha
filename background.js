@@ -19,7 +19,7 @@ const DEFAULT_CONFIG = {
   skipOwnReplies: true,
   blacklistKeywords: [],
   replyTemplate: '',
-  prioritizeNewest: true,       // ưu tiên bài mới nhất
+  prioritizeSamePost: true,       // ưu tiên hết comment cùng bài trước
   stats: {
     totalReplies: 0,
     todayReplies: 0,
@@ -33,7 +33,7 @@ const DEFAULT_CONFIG = {
 
 let config = { ...DEFAULT_CONFIG };
 let processingQueue = false;
-let myUsername = '';             // sẽ tự detect
+let myUsername = '';             // sẽ tự detect từ config hoặc content script
 
 // ---- Init ----
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -42,6 +42,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get('config');
   if (stored.config) {
     config = { ...DEFAULT_CONFIG, ...stored.config };
+    myUsername = config.myUsername || '';
   } else {
     await chrome.storage.local.set({ config });
   }
@@ -52,7 +53,10 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(async () => {
   const stored = await chrome.storage.local.get('config');
-  if (stored.config) config = { ...DEFAULT_CONFIG, ...stored.config };
+  if (stored.config) {
+    config = { ...DEFAULT_CONFIG, ...stored.config };
+    myUsername = config.myUsername || '';
+  }
 });
 
 // ---- Alarms ----
@@ -172,8 +176,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         case 'accountDetected': {
-          if (msg.username) myUsername = msg.username;
+          if (msg.username) {
+            myUsername = msg.username;
+            config.myUsername = msg.username;
+          }
           if (msg.displayName) config.myDisplayName = msg.displayName;
+          await saveConfig();
           sendResponse({ success: true });
           break;
         }
@@ -216,10 +224,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ===================================================
 
 function sortQueue() {
-  if (!config.prioritizeNewest) return;
+  if (!config.prioritizeSamePost) return;
 
-  // Sort theo tweetTime giảm dần (bài mới nhất trước)
-  config.commentQueue.sort((a, b) => (b.tweetTime || 0) - (a.tweetTime || 0));
+  // Ưu tiên comment trong cùng bài viết trước (group by tweetId)
+  // Trong mỗi group, giữ nguyên thứ tự (FIFO)
+  const groups = new Map();
+  for (const item of config.commentQueue) {
+    const key = item.tweetId || 'unknown';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+
+  // Sắp xếp group theo tweetTime giảm dần (bài mới nhất trước)
+  const sortedGroups = Array.from(groups.entries())
+    .sort(([, a], [, b]) => ((b[0]?.tweetTime || 0) - (a[0]?.tweetTime || 0)));
+
+  config.commentQueue = sortedGroups.flatMap(([, items]) => items);
 }
 
 async function processQueue() {
@@ -229,12 +249,18 @@ async function processQueue() {
   processingQueue = true;
   try {
     while (config.commentQueue.length > 0) {
-      if (config.stats.todayReplies >= config.maxRepliesPerHour * 24) {
+      const maxDaily = config.maxDailyReplies || (config.maxRepliesPerHour * 24);
+      if (config.stats.todayReplies >= maxDaily) {
         notifySidePanel('warning', '⚠️ Đạt giới hạn reply/ngày');
         break;
       }
 
       const item = config.commentQueue.shift();
+
+      // Skip nếu đã reply (dựa trên repliedTweetIds)
+      if (config.skipReplies !== false && config.repliedTweetIds.includes(item.commentId)) {
+        continue;
+      }
 
       try {
         const tweetInfo = config.myTweets.find(t => t.tweetId === item.tweetId);
@@ -432,6 +458,7 @@ Quy tắc chung:
 - Reply phải phù hợp với ngữ cảnh bài viết và comment
 - Không lặp lại y hệt comment gốc
 ${config.replyTemplate ? `- Template: ${config.replyTemplate}` : ''}
+${config.systemPrompt ? `\nCustom instructions: ${config.systemPrompt}` : ''}
 
 Trả về CHỈ nội dung reply.`;
 
