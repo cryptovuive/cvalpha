@@ -720,45 +720,34 @@ function calculateReplyLength(comment, analysis) {
   const type = analysis.commentType;
   const lenCat = analysis.lengthCategory;
 
-  // ===== BẢNG ĐỘ DÀI THEO CONTEXT =====
+  // ===== BẢNG ĐỘ DÀI — NGẮN GỌN =====
+  // Mục tiêu: 30-70 ký tự, lý tưởng 50-60
   //
-  // Comment Type        | Reply Length | Ký tự  | Ví dụ
-  // --------------------|-------------|---------|--------
-  // Ultra short (<15)   | Skip hoặc   | 10-30   | "nice" → "🔥" hoặc skip
-  //   emoji/simple      | Minimal     |         |
-  // Short (15-50)       | Short       | 25-80   | "bullish?" → "TVL đang tăng mạnh"
-  // Medium (50-150)     | Medium      | 60-150  | câu hỏi → trả lời 2-3 câu
-  // Long (150-300)      | Medium-Long | 100-220 | phân tích → counter-argument
-  // Very long (300+)    | Long        | 150-280 | essay → tóm tắt + opinion
-  //
-  // Theo Comment Type:
-  // question     → trả lời đúng câu hỏi, 60-150 chars
-  // agreement    → ngắn, thêm lý do, 30-80 chars
-  // disagreement → có luận điểm, 80-200 chars
-  // humor        → rất ngắn, witty, 20-60 chars
-  // gratitude    → ngắn, 20-50 chars
-  // spam         → SKIP
-  // general      → theo độ dài comment
+  // Comment Type        | Ký tự Min | Ideal | Max
+  // --------------------|-----------|-------|-----
+  // question            |    35     |  55   |  80
+  // agreement           |    15     |  35   |  55
+  // disagreement        |    40     |  60   |  90
+  // humor               |    10     |  30   |  50
+  // gratitude           |    10     |  25   |  40
+  // general             |    25     |  50   |  70
 
   const rules = {
-    question:     { min: 50, max: 160, ideal: 100 },
-    agreement:    { min: 20, max: 80,  ideal: 45  },
-    disagreement: { min: 60, max: 220, ideal: 130 },
-    humor:        { min: 15, max: 70,  ideal: 35  },
-    gratitude:    { min: 15, max: 50,  ideal: 30  },
-    spam:         { min: 0,  max: 0,   ideal: 0   }, // SKIP
-    general:      { min: 30, max: 150, ideal: 80  }
+    question:     { min: 35, max: 80,  ideal: 55 },
+    agreement:    { min: 15, max: 55,  ideal: 35 },
+    disagreement: { min: 40, max: 90,  ideal: 60 },
+    humor:        { min: 10, max: 50,  ideal: 30 },
+    gratitude:    { min: 10, max: 40,  ideal: 25 },
+    spam:         { min: 0,  max: 0,   ideal: 0  },
+    general:      { min: 25, max: 70,  ideal: 50 }
   };
 
   const rule = rules[type] || rules.general;
 
-  // Điều chỉnh theo độ dài comment
+  // Comment ngắn → reply ngắn hơn
   if (lenCat === 'short') {
-    rule.max = Math.min(rule.max, 100);
-    rule.ideal = Math.min(rule.ideal, 60);
-  } else if (lenCat === 'long') {
-    rule.min = Math.max(rule.min, 80);
-    rule.ideal = Math.max(rule.ideal, 140);
+    rule.max = Math.min(rule.max, 55);
+    rule.ideal = Math.min(rule.ideal, 40);
   }
 
   return rule;
@@ -829,10 +818,12 @@ ${commentTypeGuide[analysis.commentType] || commentTypeGuide.general}
 - TỐI ĐA: ${lengthRule.max} ký tự (KHÔNG được vượt quá)
 - TUYỆT ĐỐI KHÔNG vượt quá 280 ký tự (Twitter limit)
 
-CÁCH ĐIỀU CHỈNH ĐỘ DÀI:
-- Comment ngắn (< 50 chữ) → reply ${Math.round(lengthRule.max * 0.5)}-${lengthRule.max} ký tự
-- Comment dài (> 150 chữ) → reply ${lengthRule.min}-${lengthRule.ideal} ký tự
-- Luôn match "năng lượng" của comment: ngắn reply ngắn, dài reply dài hơn
+⚠️ NGUYÊN TẮC NGẮN GỌN:
+- Reply loanh quanh 30-60 ký tự. KHÔNG dài dòng.
+- 1-2 câu là đủ. Nhiều nhất 3 câu.
+- Comment ngắn → reply ngắn. Không cần elaborate.
+- Thà ngắn mà chất, hơn dài mà nhạt.
+- Nếu không có gì hay → "[SKIP]"
 
 ═══ TỰ NHIÊN NHƯ NGƯỜI THẬT ═══
 Viết như đang chat với bạn bè, KHÔNG như essay:
