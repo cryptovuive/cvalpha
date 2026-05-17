@@ -712,73 +712,178 @@ function isDuplicateReply(reply) {
 }
 
 // ===================================================
-// AI Reply Generation — nâng cấp
+// Reply Length Calculator — tính độ dài reply tối ưu
+// ===================================================
+
+function calculateReplyLength(comment, analysis) {
+  const commentLen = comment.trim().length;
+  const type = analysis.commentType;
+  const lenCat = analysis.lengthCategory;
+
+  // ===== BẢNG ĐỘ DÀI THEO CONTEXT =====
+  //
+  // Comment Type        | Reply Length | Ký tự  | Ví dụ
+  // --------------------|-------------|---------|--------
+  // Ultra short (<15)   | Skip hoặc   | 10-30   | "nice" → "🔥" hoặc skip
+  //   emoji/simple      | Minimal     |         |
+  // Short (15-50)       | Short       | 25-80   | "bullish?" → "TVL đang tăng mạnh"
+  // Medium (50-150)     | Medium      | 60-150  | câu hỏi → trả lời 2-3 câu
+  // Long (150-300)      | Medium-Long | 100-220 | phân tích → counter-argument
+  // Very long (300+)    | Long        | 150-280 | essay → tóm tắt + opinion
+  //
+  // Theo Comment Type:
+  // question     → trả lời đúng câu hỏi, 60-150 chars
+  // agreement    → ngắn, thêm lý do, 30-80 chars
+  // disagreement → có luận điểm, 80-200 chars
+  // humor        → rất ngắn, witty, 20-60 chars
+  // gratitude    → ngắn, 20-50 chars
+  // spam         → SKIP
+  // general      → theo độ dài comment
+
+  const rules = {
+    question:     { min: 50, max: 160, ideal: 100 },
+    agreement:    { min: 20, max: 80,  ideal: 45  },
+    disagreement: { min: 60, max: 220, ideal: 130 },
+    humor:        { min: 15, max: 70,  ideal: 35  },
+    gratitude:    { min: 15, max: 50,  ideal: 30  },
+    spam:         { min: 0,  max: 0,   ideal: 0   }, // SKIP
+    general:      { min: 30, max: 150, ideal: 80  }
+  };
+
+  const rule = rules[type] || rules.general;
+
+  // Điều chỉnh theo độ dài comment
+  if (lenCat === 'short') {
+    rule.max = Math.min(rule.max, 100);
+    rule.ideal = Math.min(rule.ideal, 60);
+  } else if (lenCat === 'long') {
+    rule.min = Math.max(rule.min, 80);
+    rule.ideal = Math.max(rule.ideal, 140);
+  }
+
+  return rule;
+}
+
+// ===================================================
+// Prompt Builder — xây dựng prompt chi tiết
+// ===================================================
+
+function buildSystemPrompt(selectedStyle, analysis, replyLang, lengthRule) {
+  const langMap = {
+    vi: 'Tiếng Việt', en: 'English', ja: '日本語', ko: '한국어', zh: '中文', mixed: 'Mixed Vietnamese-English'
+  };
+
+  const commentTypeGuide = {
+    question: `Comment là CÂU HỎI.
+- Trả lời ĐÚNG câu hỏi, không lan man
+- Nếu biết → trả lời ngắn gọn, có lý do
+- Nếu không chắc → nói "ko chắc nhưng mà..." hoặc "[SKIP]"
+- Có thể hỏi ngược lại để tạo thảo luận`,
+
+    agreement: `Comment ĐỒNG Ý với bài viết.
+- KHÔNG chỉ nói "đúng rồi" — thêm 1 lý do hoặc góc nhìn
+- Hoặc mở rộng quan điểm
+- Ngắn gọn, punchy`,
+
+    disagreement: `Comment KHÔNG ĐỒNG Ý.
+- Có luận điểm rõ ràng, KHÔNG chửi bới
+- "Tui ko nghĩ vậy vì..." hoặc "Mặt khác thì..."
+- Lịch sự nhưng có chính kiến`,
+
+    humor: `Comment HÀI HƯỚC / Meme.
+- Reply vui, tương tác với joke
+- KHÔNG nghiêm túc hóa
+- Rất ngắn, witty`,
+
+    gratitude: `Comment CẢM ƠN.
+- Reply ngắn: "ko có gì", "🙏", "glad it helped"
+- KHÔNG dài dòng`,
+
+    spam: `Comment SPAM/ADS.
+- TRẢ VỀ "[SKIP]" — KHÔNG reply`,
+
+    general: `Comment bình thường.
+- Reply phù hợp ngữ cảnh
+- Thêm giá trị hoặc tạo thảo luận`
+  };
+
+  return `=== HỆ THỐNG COMMENT AI ===
+Bạn là người dùng Twitter/X thật sự. Nhiệm vụ: reply comment trên bài viết.
+
+═══ PHONG CÁCH ═══
+${selectedStyle.name}: ${selectedStyle.prompt}
+
+═══ NGÔN NGỮ ═══
+${langMap[replyLang] || langMap.vi}
+- Comment tiếng Việt → reply tiếng Việt
+- Comment tiếng Anh → reply tiếng Anh
+- Comment mixed → reply mixed tự nhiên
+- KHÔNG ép một ngôn ngữ khi comment dùng ngôn ngữ khác
+
+═══ LOẠI COMMENT ═══
+${commentTypeGuide[analysis.commentType] || commentTypeGuide.general}
+
+═══ GIỚI HẠN KÝ TỰ (QUAN TRỌNG NHẤT) ═══
+- TỐI THIỂU: ${lengthRule.min} ký tự
+- LÝ TƯỞNG: ${lengthRule.ideal} ký tự
+- TỐI ĐA: ${lengthRule.max} ký tự (KHÔNG được vượt quá)
+- TUYỆT ĐỐI KHÔNG vượt quá 280 ký tự (Twitter limit)
+
+CÁCH ĐIỀU CHỈNH ĐỘ DÀI:
+- Comment ngắn (< 50 chữ) → reply ${Math.round(lengthRule.max * 0.5)}-${lengthRule.max} ký tự
+- Comment dài (> 150 chữ) → reply ${lengthRule.min}-${lengthRule.ideal} ký tự
+- Luôn match "năng lượng" của comment: ngắn reply ngắn, dài reply dài hơn
+
+═══ TỰ NHIÊN NHƯ NGƯỜI THẬT ═══
+Viết như đang chat với bạn bè, KHÔNG như essay:
+- Viết tắt thỉnh thoảng: "ko" "đc" "v" "btw" "ngl"
+- Filler words: "à" "mà" "thì" "ơ" "hmm"
+- Thỉnh thoảng thiếu dấu câu cuối
+- Có thể viết thường đầu câu
+- Emoji tự nhiên (60% có, 25% không, 15% nhiều)
+- KHÔNG bắt đầu bằng: "Great question!", "Interesting!", "Good point!"
+- KHÔNG dùng: "As an AI", "I think", "In my opinion"
+- KHÔNG quá politically correct
+- Có thể có opinion, có thể不同意
+
+═══ ON-TOPIC RULES ═══
+- Reply PHẢI liên quan đến comment và bài viết
+- KHÔNG lái sang chủ đề khác
+- KHÔNG thêm thông tin không liên quan
+- Nếu comment hỏi về X → trả lời về X, KHÔNG nói về Y
+- Nếu không có gì hay để nói → "[SKIP]"
+
+═══ SKIP RULES ═══
+Trả về "[SKIP]" nếu:
+- Comment spam/ads/quảng cáo
+- Comment quá vô nghĩa
+- Không có gì giá trị để reply
+- Comment tag người khác (không phải hỏi mình)
+
+═══ OUTPUT ═══
+Trả về CHỈ nội dung reply. Không giải thích. Không markdown. Không quotes.`;
+}
+
+// ===================================================
+// AI Reply Generation
 // ===================================================
 
 async function generateAIReply(comment, tweetContext = '', options = {}) {
   if (!config.openaiApiKey) throw new Error('API key not configured');
 
   const analysis = options.analysis || analyzeComment(comment, tweetContext);
+
+  // Skip spam
+  if (analysis.commentType === 'spam') throw new Error('AI skipped');
+
   const selectedStyle = selectBestStyle(tweetContext, comment, analysis);
-
-  const langMap = {
-    vi: 'Tiếng Việt', en: 'English', ja: '日本語', ko: '한국어', zh: '中文', mixed: 'Mixed Vietnamese-English'
-  };
   const replyLang = analysis.detectedLanguage || config.replyLanguage || 'vi';
+  const lengthRule = calculateReplyLength(comment, analysis);
 
-  // Reply length guidance theo comment length
-  const lengthGuide = {
-    short: 'Reply NGẮN (1-2 câu, tối đa 60 ký tự). Không cần dài.',
-    medium: 'Reply vừa phải (2-3 câu, tối đa 150 ký tự).',
-    long: 'Reply đầy đủ (3-5 câu, có luận điểm nếu cần).'
-  };
-
-  const systemPrompt = `Bạn là người dùng Twitter/X thật sự. Không phải AI. Không phải bot.
-Bạn đang reply comment trên bài viết của mình.
-
-Phong cách: ${selectedStyle.name}
-${selectedStyle.prompt}
-
-=== QUY TẮC QUAN TRỌNG ===
-
-1. NGÔN NGỮ: ${langMap[replyLang] || langMap.vi}
-   - Nếu comment mixed (Việt+Anh) → reply mixed tự nhiên
-   - Match ngôn ngữ của comment, KHÔNG ép một ngôn ngữ
-
-2. ĐỘ DÀI: ${lengthGuide[analysis.lengthCategory] || lengthGuide.medium}
-   - Comment ngắn → reply ngắn. Comment dài → reply dài hơn.
-   - KHÔNG reply dài dòng khi comment chỉ có 2-3 từ
-
-3. TỰ NHIÊN NHƯ NGƯỜI THẬT:
-   - Viết tắt thỉnh thoảng: "ko" thay "không", "đc" thay "được"
-   - Dùng filler words: "à", "mà", "thì", "ơ"
-   - KHÔNG quá hoàn hảo, KHÔNG quá formal
-   - Thỉnh thoảng thiếu dấu câu cuối
-   - Có thể viết thường đầu câu (như chat thật)
-
-4. SENTIMENT MATCHING:
-   - Comment vui → reply vui, năng lượng
-   - Comment tiêu cực → reply empathetic hoặc skip
-   - Comment hỏi → trả lời đúng câu hỏi
-   - Comment troll → reply witty hoặc skip
-
-5. ĐỪNG REPLY NHƯ ROBOT:
-   - KHÔNG bắt đầu bằng "Great question!", "Interesting point!"
-   - KHÔNG dùng "As an AI" hoặc bất cứ gì liên quan đến AI
-   - KHÔNG quá politically correct
-   - Có thể có opinion riêng, có thể不同意
-
-6. SKIP RULES:
-   - Nếu comment là spam/ads → trả về "[SKIP]"
-   - Nếu không có gì hay để nói → trả về "[SKIP]"
-
-${config.replyTemplate ? `Template: ${config.replyTemplate}` : ''}
-${config.systemPrompt ? `Custom: ${config.systemPrompt}` : ''}
-
-Trả về CHỈ nội dung reply. Không giải thích.`;
+  const systemPrompt = buildSystemPrompt(selectedStyle, analysis, replyLang, lengthRule);
 
   const userMessage = tweetContext
-    ? `Bài viết: "${tweetContext}"\nComment của @${options.username || 'user'}: "${comment}"`
+    ? `Bài viết: "${tweetContext.substring(0, 200)}"\nComment của @${options.username || 'user'}: "${comment}"`
     : `Comment: "${comment}"`;
 
   const response = await fetch(`${config.openaiBaseUrl}/chat/completions`, {
@@ -793,7 +898,7 @@ Trả về CHỈ nội dung reply. Không giải thích.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
       ],
-      max_tokens: 180,
+      max_tokens: 120,
       temperature: 0.85
     })
   });
@@ -808,15 +913,60 @@ Trả về CHỈ nội dung reply. Không giải thích.`;
   if (!reply) throw new Error('Empty response');
   if (reply === '[SKIP]') throw new Error('AI skipped');
 
+  // ===== POST-GENERATION VALIDATION =====
+
+  // 1. Nếu quá dài → cắt thông minh (tại ranh giới câu)
+  if (reply.length > lengthRule.max) {
+    // Tìm dấu câu gần nhất trước limit
+    const cutPoint = findCutPoint(reply, lengthRule.max);
+    reply = reply.substring(0, cutPoint).trim();
+  }
+
+  // 2. Nếu quá ngắn và không phải minimal style → bỏ qua
+  if (reply.length < lengthRule.min && selectedStyle.id !== 'minimal_gm') {
+    // Quá ngắn, thử tạo lại hoặc skip
+    if (reply.length < 10) throw new Error('AI skipped');
+  }
+
+  // 3. Nếu vượt 280 ký tự → cắt
+  if (reply.length > 280) {
+    const cutPoint = findCutPoint(reply, 277);
+    reply = reply.substring(0, cutPoint).trim() + '...';
+  }
+
   // ===== APPLY HUMAN VARIATION =====
   reply = applyHumanVariation(reply, { language: replyLang });
 
-  // Ensure within Twitter limit
-  if (reply.length > 280) reply = reply.substring(0, 277) + '...';
+  // Final length check
+  if (reply.length > 280) reply = reply.substring(0, 280);
 
-  notifySidePanel('info', `🎨 Style: ${selectedStyle.name} | ${analysis.commentType} | ${replyLang}`);
+  notifySidePanel('info', `🎨 ${selectedStyle.name} | ${analysis.commentType} | ${reply.length}/${lengthRule.max} chars`);
 
   return reply;
+}
+
+// Tìm vị trí cắt thông minh (tại ranh giới câu/từ)
+function findCutPoint(text, maxLen) {
+  if (text.length <= maxLen) return text.length;
+
+  // Tìm dấu câu gần nhất trước limit
+  const punctuation = ['. ', '! ', '? ', '… ', '.\n', '!\n', '?\n'];
+  let bestCut = maxLen;
+
+  for (const p of punctuation) {
+    const idx = text.lastIndexOf(p, maxLen);
+    if (idx > maxLen * 0.5) { // Không cắt quá ngắn (>50% limit)
+      bestCut = Math.min(bestCut, idx + p.length);
+    }
+  }
+
+  // Nếu không tìm thấy dấu câu → cắt tại ranh giới từ
+  if (bestCut === maxLen) {
+    const lastSpace = text.lastIndexOf(' ', maxLen);
+    if (lastSpace > maxLen * 0.6) bestCut = lastSpace;
+  }
+
+  return bestCut;
 }
 
 // ---- API Test ----

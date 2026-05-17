@@ -198,6 +198,25 @@
           </div>
         </div>
       </div>
+
+      <div class="section">
+        <h2>📏 Bảng ký tự tối ưu</h2>
+        <div class="hint" style="line-height:1.8">
+          <strong>Giới hạn Twitter:</strong> 280 ký tự<br><br>
+          <strong>Theo loại comment:</strong><br>
+          • <code>Câu hỏi</code> → 50-160 ký tự (lý tưởng: 100)<br>
+          • <code>Đồng ý</code> → 20-80 ký tự (lý tưởng: 45)<br>
+          • <code>Phản đối</code> → 60-220 ký tự (lý tưởng: 130)<br>
+          • <code>Hài hước</code> → 15-70 ký tự (lý tưởng: 35)<br>
+          • <code>Cảm ơn</code> → 15-50 ký tự (lý tưởng: 30)<br>
+          • <code>Bình thường</code> → 30-150 ký tự (lý tưởng: 80)<br><br>
+          <strong>Nguyên tắc:</strong><br>
+          • Comment ngắn → reply ngắn<br>
+          • Comment dài → reply dài hơn (nhưng không quá 220)<br>
+          • Luôn match "năng lượng" của comment<br>
+          • Cắt thông minh tại ranh giới câu/từ nếu quá dài
+        </div>
+      </div>
     </div>
 
     <!-- Tab: Cài đặt -->
@@ -235,6 +254,13 @@
           </div>
         </div>
         <button class="btn-secondary full-width" id="testApiBtn">🧪 Kiểm tra kết nối API</button>
+      </div>
+
+      <!-- Custom System Prompt -->
+      <div class="section">
+        <h2>🧠 System Prompt tùy chỉnh</h2>
+        <textarea id="systemPromptInput" rows="4" placeholder="VD: Luôn reply bằng giọng Nam Bộ. Thích dùng emoji 🤙. Không bao giờ dùng từ 'tuyệt vời'."></textarea>
+        <div class="hint">Thêm instruction riêng cho AI. Để trống = dùng mặc định. Prompt này được thêm vào cuối system prompt.</div>
       </div>
 
       <!-- Rate Limiting -->

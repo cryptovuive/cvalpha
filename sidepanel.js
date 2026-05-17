@@ -125,6 +125,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     humanTyping.checked = config.humanTyping !== false;
     myUsernameInput.value = config.myUsername || '';
 
+    // System prompt
+    const systemPromptInput = document.getElementById('systemPromptInput');
+    if (systemPromptInput) systemPromptInput.value = config.systemPrompt || '';
+
     // New smart settings
     const smartSkipEl = document.getElementById('smartSkip');
     const humanImpEl = document.getElementById('humanImperfections');
@@ -206,7 +210,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       tweetContext: ''
     }, (res) => {
       if (res?.reply) {
-        previewContent.textContent = res.reply;
+        const len = res.reply.length;
+        const limit = 280;
+        const color = len > limit ? 'red' : len > 200 ? 'orange' : '#4ade80';
+        previewContent.innerHTML = `
+          <div>${res.reply}</div>
+          <div style="margin-top:8px;font-size:11px;color:${color};text-align:right;">
+            ${len}/${limit} ký tự
+          </div>
+        `;
       } else {
         previewContent.textContent = `❌ ${res?.error || 'Lỗi tạo reply'}`;
       }
@@ -369,6 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       replyTone: currentTone,
       customTone: customPrompt.value.trim(),
       replyTemplate: replyTemplate.value.trim(),
+      systemPrompt: document.getElementById('systemPromptInput')?.value?.trim() || '',
       maxRepliesPerHour: parseInt(maxPerHour.value) || 10,
       delayMin: parseInt(delayMin.value) || 60,
       delayMax: parseInt(delayMax.value) || 120,
