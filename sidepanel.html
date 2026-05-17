@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Auto Reply</title>
+  <link rel="stylesheet" href="styles/sidepanel.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <div class="logo">🐦</div>
+        <div class="header-info">
+          <h1>Twitter Auto Reply</h1>
+          <span class="status-text" id="statusText">Đang chờ...</span>
+        </div>
+      </div>
+      <label class="toggle-switch" title="Bật/Tắt Auto Reply">
+        <input type="checkbox" id="toggleEnabled">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button class="tab active" data-tab="chat">
+        <span class="tab-icon">💬</span>
+        <span class="tab-label">Tạo chat tự động</span>
+      </button>
+      <button class="tab" data-tab="prompt">
+        <span class="tab-icon">✏️</span>
+        <span class="tab-label">Tùy chỉnh Prompt</span>
+      </button>
+      <button class="tab" data-tab="settings">
+        <span class="tab-icon">⚙️</span>
+        <span class="tab-label">Cài đặt</span>
+      </button>
+    </div>
+
+    <!-- Tab: Chat tự động -->
+    <div class="tab-content active" id="tab-chat">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" id="todayCount">0</div>
+          <div class="stat-label">Hôm nay</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalCount">0</div>
+          <div class="stat-label">Tổng cộng</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="queueCount">0</div>
+          <div class="stat-label">Đang chờ</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="tweetsCount">0</div>
+          <div class="stat-label">Bài viết</div>
+        </div>
+      </div>
+
+      <!-- Account Info -->
+      <div class="section account-info">
+        <div class="account-header">
+          <span class="account-avatar">👤</span>
+          <div class="account-details">
+            <div class="account-name" id="accountName">Đang detect...</div>
+            <div class="account-handle" id="accountHandle">@...</div>
+          </div>
+          <span class="account-status" id="accountStatus">⏳</span>
+        </div>
+      </div>
+
+      <!-- My Tweets Tracking -->
+      <div class="section">
+        <div class="section-header">
+          <h2>📰 Bài viết đang theo dõi</h2>
+          <button class="btn-sm" id="refreshTweetsBtn">🔄 Quét lại</button>
+        </div>
+        <div class="tweets-list" id="tweetsList">
+          <div class="log-empty">Đang quét bài viết...</div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="section">
+        <div class="section-header">
+          <h2>📋 Nhật ký hoạt động</h2>
+          <button class="btn-sm" id="clearLogBtn">Xóa</button>
+        </div>
+        <div class="activity-log" id="activityLog">
+          <div class="log-empty">Chưa có hoạt động nào</div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="section">
+        <h2>⚡ Thao tác nhanh</h2>
+        <div class="action-grid">
+          <button class="action-btn" id="scanNowBtn">
+            <span class="action-icon">🔍</span>
+            <span>Quét ngay</span>
+          </button>
+          <button class="action-btn" id="pauseBtn">
+            <span class="action-icon">⏸️</span>
+            <span>Tạm dừng</span>
+          </button>
+          <button class="action-btn" id="testReplyBtn">
+            <span class="action-icon">🧪</span>
+            <span>Test reply</span>
+          </button>
+          <button class="action-btn" id="exportLogBtn">
+            <span class="action-icon">📤</span>
+            <span>Export log</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Tùy chỉnh Prompt -->
+    <div class="tab-content" id="tab-prompt">
+      <div class="section">
+        <h2>🎨 Giọng điệu</h2>
+        <div class="tone-grid">
+          <button class="tone-btn active" data-tone="friendly">
+            <span class="tone-icon">😊</span>
+            <span>Thân thiện</span>
+          </button>
+          <button class="tone-btn" data-tone="professional">
+            <span class="tone-icon">💼</span>
+            <span>Chuyên nghiệp</span>
+          </button>
+          <button class="tone-btn" data-tone="funny">
+            <span class="tone-icon">😂</span>
+            <span>Hài hước</span>
+          </button>
+          <button class="tone-btn" data-tone="sarcastic">
+            <span class="tone-icon">😏</span>
+            <span>Mỉa mai</span>
+          </button>
+          <button class="tone-btn" data-tone="custom">
+            <span class="tone-icon">✏️</span>
+            <span>Tùy chỉnh</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🌍 Ngôn ngữ trả lời</h2>
+        <select id="language" class="select-full">
+          <option value="vi">🇻🇳 Tiếng Việt</option>
+          <option value="en">🇺🇸 English</option>
+          <option value="ja">🇯🇵 日本語</option>
+          <option value="ko">🇰🇷 한국어</option>
+          <option value="zh">🇨🇳 中文</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <h2>🎨 Hệ thống phong cách tự động</h2>
+        <div class="checkbox-group">
+          <label class="checkbox">
+            <input type="checkbox" id="autoStyle" checked>
+            <span>Tự động chọn phong cách phù hợp nhất</span>
+          </label>
+        </div>
+        <div class="hint">Extension sẽ phân tích ngữ cảnh bài viết + comment để chọn phong cách tốt nhất từ 10 kiểu: 🔥Hype, 📊Phân tích, 😂Meme, ❓Câu hỏi, 🤝Ủng hộ, 💎Alpha, 💼Chuyên nghiệp, 🫂Cộng đồng, ⚠️Cảnh báo, ✨Minimal</div>
+      </div>
+
+      <div class="section" id="customPromptSection" style="display:none">
+        <h2>📝 Prompt tùy chỉnh</h2>
+        <textarea id="customPrompt" rows="6" placeholder="Ví dụ: Bạn là trợ lý Twitter, reply bằng giọng Nam Bộ, hay dùng emoji..."></textarea>
+        <div class="hint">Mô tả chi tiết giọng điệu và phong cách bạn muốn AI reply.</div>
+      </div>
+
+      <div class="section">
+        <h2>💬 Template reply</h2>
+        <textarea id="replyTemplate" rows="3" placeholder="VD: Cảm ơn bạn đã bình luận! "></textarea>
+        <div class="hint">Text thêm vào đầu mỗi reply (để trống nếu không cần).</div>
+      </div>
+
+      <div class="section">
+        <h2>🧪 Preview</h2>
+        <div class="preview-box">
+          <div class="preview-label">AI sẽ reply như thế này:</div>
+          <div class="preview-content" id="previewContent">
+            Chọn giọng điệu và nhập comment thử để xem preview...
+          </div>
+          <div class="preview-input-row">
+            <input type="text" id="previewInput" placeholder="Nhập comment thử...">
+            <button class="btn-primary" id="previewBtn">Test</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Cài đặt -->
+    <div class="tab-content" id="tab-settings">
+      <!-- API Config -->
+      <div class="section">
+        <h2>🔑 OpenAI API</h2>
+        <div class="form-group">
+          <label>API Key</label>
+          <div class="input-row">
+            <input type="password" id="apiKey" placeholder="sk-...">
+            <button class="btn-icon" id="toggleKeyBtn" title="Hiện/ẩn">👁️</button>
+          </div>
+          <div class="api-status" id="apiStatus"></div>
+        </div>
+        <div class="form-group">
+          <label>Base URL</label>
+          <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1">
+          <div class="hint">Đổi nếu dùng proxy hoặc OpenAI-compatible API (OpenRouter, Ollama...)</div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Model</label>
+            <select id="model">
+              <option value="gpt-5.4-mini">GPT-5.4-mini</option>
+              <option value="gpt-4.1-mini">GPT-4.1-mini</option>
+              <option value="gpt-4o-mini">GPT-4o-mini</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="custom">Custom...</option>
+            </select>
+          </div>
+          <div class="form-group" id="customModelGroup" style="display:none">
+            <label>Custom Model</label>
+            <input type="text" id="customModel" placeholder="model-name">
+          </div>
+        </div>
+        <button class="btn-secondary full-width" id="testApiBtn">🧪 Kiểm tra kết nối API</button>
+      </div>
+
+      <!-- Rate Limiting -->
+      <div class="section">
+        <h2>⏱️ Giới hạn</h2>
+        <div class="form-group">
+          <label>Max reply/giờ</label>
+          <input type="number" id="maxPerHour" min="1" max="50" value="10">
+        </div>
+        <div class="form-group">
+          <label>Delay giữa mỗi reply (giây) — random trong khoảng</label>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Từ (giây)</label>
+              <input type="number" id="delayMin" min="30" max="300" value="60">
+            </div>
+            <div class="form-group">
+              <label>Đến (giây)</label>
+              <input type="number" id="delayMax" min="30" max="300" value="120">
+            </div>
+          </div>
+          <div class="hint">Random giữa 2 giá trị. 60-120s = 1-2 phút mỗi reply.</div>
+        </div>
+        <div class="checkbox-group">
+          <label class="checkbox">
+            <input type="checkbox" id="prioritizeSamePost" checked>
+            <span>Ưu tiên hết comment trong 1 bài trước</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="section">
+        <h2>🛡️ Bộ lọc</h2>
+        <div class="form-group">
+          <label>Tài khoản Twitter của bạn (để trống = auto detect)</label>
+          <input type="text" id="myUsernameInput" placeholder="username (không có @)">
+          <div class="hint">Nhập username nếu auto detect không chính xác. Extension sẽ lọc bỏ comment của bạn.</div>
+        </div>
+        <div class="form-group">
+          <label>Blacklist từ khóa (phẩy ngăn cách)</label>
+          <input type="text" id="blacklist" placeholder="spam, ads, quảng cáo...">
+        </div>
+        <div class="checkbox-group">
+          <label class="checkbox">
+            <input type="checkbox" id="skipReplies" checked>
+            <span>Bỏ qua nếu đã reply</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="skipOwn" checked>
+            <span>Bỏ qua tweet của mình</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="humanTyping" checked>
+            <span>🤖➡️👤 Gõ như người thật (suy nghĩ, gõ sai, sửa)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Data -->
+      <div class="section">
+        <h2>💾 Dữ liệu</h2>
+        <div class="action-grid">
+          <button class="action-btn" id="exportBtn">
+            <span class="action-icon">📤</span>
+            <span>Export</span>
+          </button>
+          <button class="action-btn" id="importBtn">
+            <span class="action-icon">📥</span>
+            <span>Import</span>
+          </button>
+          <button class="action-btn" id="resetBtn">
+            <span class="action-icon">🗑️</span>
+            <span>Reset</span>
+          </button>
+          <button class="action-btn" id="openOptionsBtn">
+            <span class="action-icon">🔧</span>
+            <span>Nâng cao</span>
+          </button>
+        </div>
+        <input type="file" id="importFile" accept=".json" style="display:none">
+      </div>
+
+      <!-- Save -->
+      <button class="btn-primary full-width" id="saveBtn">💾 Lưu tất cả cài đặt</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span>v1.1.0 • Made with ❤️</span>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

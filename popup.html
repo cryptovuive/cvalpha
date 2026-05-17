@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Auto Reply</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="popup">
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">🐦</div>
+      <div class="title">
+        <h1>Auto Reply</h1>
+        <span class="version">v1.0.0</span>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggleEnabled">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar" id="statusBar">
+      <div class="status-item">
+        <span class="status-icon">📊</span>
+        <div>
+          <div class="status-label">Hôm nay</div>
+          <div class="status-value" id="todayReplies">0</div>
+        </div>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">📨</span>
+        <div>
+          <div class="status-label">Tổng cộng</div>
+          <div class="status-value" id="totalReplies">0</div>
+        </div>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">⏳</span>
+        <div>
+          <div class="status-label">Queue</div>
+          <div class="status-value" id="queueCount">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Settings -->
+    <div class="section">
+      <h2>⚙️ Cài đặt nhanh</h2>
+
+      <div class="form-group">
+        <label>OpenAI API Key</label>
+        <div class="input-with-btn">
+          <input type="password" id="apiKey" placeholder="sk-...">
+          <button id="toggleKeyVisibility" class="btn-icon" title="Hiện/ẩn">👁️</button>
+        </div>
+        <div class="api-status" id="apiStatus"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Model</label>
+          <select id="model">
+            <option value="gpt-5.4-mini">GPT-5.4-mini</option>
+            <option value="gpt-4.1-mini">GPT-4.1-mini</option>
+            <option value="gpt-4o-mini">GPT-4o-mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="custom">Custom model...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Ngôn ngữ</label>
+          <select id="language">
+            <option value="vi">🇻🇳 Tiếng Việt</option>
+            <option value="en">🇺🇸 English</option>
+            <option value="ja">🇯🇵 日本語</option>
+            <option value="ko">🇰🇷 한국어</option>
+            <option value="zh">🇨🇳 中文</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" id="customModelGroup" style="display:none">
+        <label>Custom Model Name</label>
+        <input type="text" id="customModel" placeholder="e.g. gpt-5.4-mini">
+      </div>
+    </div>
+
+    <!-- Tone Settings -->
+    <div class="section">
+      <h2>🎨 Giọng điệu</h2>
+      <div class="tone-grid">
+        <button class="tone-btn active" data-tone="friendly">😊 Thân thiện</button>
+        <button class="tone-btn" data-tone="professional">💼 Chuyên nghiệp</button>
+        <button class="tone-btn" data-tone="funny">😂 Hài hước</button>
+        <button class="tone-btn" data-tone="sarcastic">😏 Mỉa mai</button>
+        <button class="tone-btn" data-tone="custom">✏️ Tùy chỉnh</button>
+      </div>
+      <div class="form-group" id="customToneGroup" style="display:none">
+        <textarea id="customTone" placeholder="Mô tả giọng điệu bạn muốn..." rows="2"></textarea>
+      </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="section">
+      <h2>🔧 Nâng cao</h2>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Giới hạn/giờ</label>
+          <input type="number" id="maxPerHour" min="1" max="50" value="10">
+        </div>
+        <div class="form-group">
+          <label>Delay (giây)</label>
+          <input type="number" id="delay" min="5" max="300" value="30">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Blacklist từ khóa (phẩy ngăn cách)</label>
+        <input type="text" id="blacklist" placeholder="spam, ads, quảng cáo...">
+      </div>
+
+      <div class="checkbox-group">
+        <label class="checkbox">
+          <input type="checkbox" id="skipReplies" checked>
+          <span>Bỏ qua nếu đã reply</span>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="skipOwn">
+          <span>Bỏ qua tweet của mình</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button id="saveBtn" class="btn btn-primary">💾 Lưu cài đặt</button>
+      <button id="testBtn" class="btn btn-secondary">🧪 Test API</button>
+      <button id="optionsBtn" class="btn btn-ghost">⚙️ Options</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span>Made with ❤️ for Twitter/X</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Auto Reply - Options</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --bg-card: #1a1a2e;
+      --bg-input: #16213e;
+      --border: #2a2a4a;
+      --text: #e0e0e0;
+      --text-dim: #8888aa;
+      --primary: #1d9bf0;
+      --success: #00c853;
+      --error: #ff5252;
+      --radius: 10px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      padding: 40px;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .subtitle {
+      color: var(--text-dim);
+      margin-bottom: 32px;
+    }
+
+    .section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .section h2 {
+      font-size: 16px;
+      margin-bottom: 16px;
+      color: #fff;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+    }
+
+    .form-group input:focus, .form-group textarea:focus {
+      border-color: var(--primary);
+    }
+
+    textarea { resize: vertical; font-family: inherit; }
+
+    .form-row {
+      display: flex;
+      gap: 16px;
+    }
+
+    .form-row .form-group { flex: 1; }
+
+    .hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-danger { background: var(--error); color: white; }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    .log-area {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 500;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .toast.show { opacity: 1; }
+    .toast.success { background: var(--success); color: white; }
+    .toast.error { background: var(--error); color: white; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ Twitter Auto Reply - Options</h1>
+    <p class="subtitle">Cài đặt chi tiết cho extension</p>
+
+    <!-- Stats -->
+    <div class="section">
+      <h2>📊 Thống kê</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="statToday">0</div>
+          <div class="stat-label">Hôm nay</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statTotal">0</div>
+          <div class="stat-label">Tổng cộng</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statErrors">0</div>
+          <div class="stat-label">Lỗi</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Settings -->
+    <div class="section">
+      <h2>🔑 API Configuration</h2>
+      <div class="form-group">
+        <label>OpenAI API Key</label>
+        <input type="password" id="optApiKey" placeholder="sk-...">
+      </div>
+      <div class="form-group">
+        <label>Base URL</label>
+        <input type="text" id="optBaseUrl" placeholder="https://api.openai.com/v1">
+        <div class="hint">Thay đổi nếu dùng proxy hoặc OpenAI-compatible API</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="optModel" placeholder="gpt-5.4-mini">
+        </div>
+        <div class="form-group">
+          <label>Temperature</label>
+          <input type="number" id="optTemp" min="0" max="2" step="0.1" value="0.7">
+        </div>
+      </div>
+    </div>
+
+    <!-- Reply Template -->
+    <div class="section">
+      <h2>📝 Reply Template</h2>
+      <div class="form-group">
+        <label>System Prompt (nâng cao)</label>
+        <textarea id="optSystemPrompt" rows="4" placeholder="Tùy chỉnh system prompt cho AI..."></textarea>
+        <div class="hint">Để trống sẽ dùng prompt mặc định. Sử dụng {tone}, {language} làm biến.</div>
+      </div>
+      <div class="form-group">
+        <label>Template prefix (thêm vào đầu mỗi reply)</label>
+        <input type="text" id="optTemplate" placeholder="VD: Cảm ơn bạn! ">
+      </div>
+    </div>
+
+    <!-- Rate Limiting -->
+    <div class="section">
+      <h2>⏱️ Rate Limiting</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Max replies/ngày</label>
+          <input type="number" id="optMaxDaily" min="1" max="500" value="100">
+        </div>
+        <div class="form-group">
+          <label>Max replies/giờ</label>
+          <input type="number" id="optMaxHourly" min="1" max="50" value="10">
+        </div>
+        <div class="form-group">
+          <label>Delay tối thiểu (giây)</label>
+          <input type="number" id="optMinDelay" min="5" max="300" value="30">
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Management -->
+    <div class="section">
+      <h2>💾 Dữ liệu</h2>
+      <div class="btn-row">
+        <button id="exportBtn" class="btn btn-primary">📤 Export config</button>
+        <button id="importBtn" class="btn btn-primary">📥 Import config</button>
+        <button id="resetBtn" class="btn btn-danger">🗑️ Reset tất cả</button>
+      </div>
+      <input type="file" id="importFile" accept=".json" style="display:none">
+    </div>
+
+    <!-- Save -->
+    <div class="btn-row">
+      <button id="saveAllBtn" class="btn btn-primary">💾 Lưu tất cả</button>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
