@@ -497,22 +497,51 @@
   async function postReply(tweetId, commentId, replyText, username) {
     log(`Replying to @${username}: "${replyText.substring(0, 40)}..."`);
 
-    // Tìm comment article
+    // ===== FIND COMMENT — exact match theo ID =====
     let targetArticle = null;
-    const articles = document.querySelectorAll(`article[data-testid="tweet"]:not([data-ar-replied])`);
+    const articles = document.querySelectorAll(`article[data-testid="tweet"]`);
 
+    // Cách 1: Exact match — tìm article có link chứa đúng commentId
     for (const article of articles) {
-      const timeEl = article.querySelector('time');
-      const linkEl = timeEl?.closest('a');
-      const url = linkEl?.href || '';
-      if (url.includes(commentId)) {
-        targetArticle = article;
-        break;
+      if (article.hasAttribute('data-ar-replied')) continue;
+      const links = article.querySelectorAll('a[href*="/status/"]');
+      for (const link of links) {
+        const href = link.getAttribute('href') || '';
+        // Match exact: /username/status/COMMENT_ID
+        if (href.match(new RegExp(`/status/${commentId}$`))) {
+          targetArticle = article;
+          break;
+        }
+      }
+      if (targetArticle) break;
+    }
+
+    // Cách 2: Match theo time element link
+    if (!targetArticle) {
+      for (const article of articles) {
+        if (article.hasAttribute('data-ar-replied')) continue;
+        const timeEl = article.querySelector('time');
+        const timeLink = timeEl?.closest('a');
+        if (timeLink && timeLink.href.includes(`/status/${commentId}`)) {
+          targetArticle = article;
+          break;
+        }
       }
     }
 
+    // Cách 3: Fallback — tìm article chưa processed (cẩn thận)
     if (!targetArticle) {
-      targetArticle = document.querySelector(`article[data-testid="tweet"]:not([${PROCESSED_COMMENT}])`);
+      log('⚠️ Exact match failed, trying fallback...');
+      for (const article of articles) {
+        if (!article.hasAttribute(PROCESSED_COMMENT) && !article.hasAttribute('data-ar-replied')) {
+          // Verify: check username không phải mình
+          const articleUsername = getArticleUsername(article);
+          if (articleUsername && articleUsername.toLowerCase() !== myUsername.toLowerCase()) {
+            targetArticle = article;
+            break;
+          }
+        }
+      }
     }
 
     if (!targetArticle) throw new Error('Comment not found');
@@ -566,6 +595,7 @@
 
     log(`Reply posted ✓`);
     showToast(`✅ Đã reply @${username}`);
+    return { success: true };
   }
 
   // ===================================================
@@ -655,70 +685,62 @@
   };
 
   async function humanType(inputEl, text) {
-    const shouldTypo = () => Math.random() < 0.04; // 4% chance gõ sai mỗi ký tự
-    const shouldPause = () => Math.random() < 0.08; // 8% chance dừng suy nghĩ
-    const shouldLongPause = () => Math.random() < 0.02; // 2% chance dừng lâu
+    const shouldTypo = () => Math.random() < 0.035;  // 3.5% typo mỗi ký tự
+    const shouldPause = () => Math.random() < 0.07;  // 7% dừng ngắn
+    const shouldLongPause = () => Math.random() < 0.015; // 1.5% dừng dài
+
+    // Tốc độ gõ theo pattern — người thật gõ nhanh hơn khi nghĩ sẵn câu
+    const getTypingDelay = (char, nextChar, prevChar) => {
+      // Gõ nhanh trong từ (đã nghĩ sẵn)
+      if (prevChar && nextChar && prevChar !== ' ' && nextChar !== ' ') {
+        return randomBetween(40, 100);
+      }
+      // Chậm hơn ở ranh giới từ
+      if (char === ' ' || (prevChar === ' ')) {
+        return randomBetween(80, 180);
+      }
+      // Rất chậm sau dấu câu (đang nghĩ câu tiếp)
+      if ('.!?…'.includes(char)) {
+        return randomBetween(300, 800);
+      }
+      // Chậm sau dấu phẩy
+      if (',;:'.includes(char)) {
+        return randomBetween(150, 400);
+      }
+      // Bình thường
+      return randomBetween(60, 150);
+    };
 
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
+      const prevChar = i > 0 ? text[i - 1] : null;
+      const nextChar = i < text.length - 1 ? text[i + 1] : null;
 
       // ===== DỪNG SUY NGHĨ GIỮA CHỪNG =====
       if (shouldLongPause()) {
-        // Dừng lâu 1-3 giây (đang suy nghĩ câu tiếp)
-        await sleep(randomBetween(1000, 3000));
+        await sleep(randomBetween(1200, 3500));
       } else if (shouldPause()) {
-        // Dừng ngắn 0.3-0.8 giây
-        await sleep(randomBetween(300, 800));
+        await sleep(randomBetween(250, 700));
       }
 
       // ===== GÕ SAI RỒI SỬA =====
       if (shouldTypo() && i > 0 && i < text.length - 1) {
         const typoChar = getTypoChar(char);
         if (typoChar) {
-          // Gõ sai
           insertChar(inputEl, typoChar);
-          await sleep(randomBetween(100, 300));
-
-          // Nhận ra sai (đợi 0.2-0.5 giây)
-          await sleep(randomBetween(200, 500));
-
-          // Xóa ký tự sai (Backspace)
+          await sleep(randomBetween(80, 250));
+          await sleep(randomBetween(150, 400)); // nhận ra sai
           pressKey(inputEl, 'Backspace');
-          await sleep(randomBetween(80, 200));
-
-          // Gõ lại đúng
+          await sleep(randomBetween(60, 180));
           insertChar(inputEl, char);
-          await sleep(randomBetween(50, 150));
+          await sleep(randomBetween(40, 120));
           continue;
         }
       }
 
       // ===== GÕ BÌNH THƯỜNG =====
       insertChar(inputEl, char);
-
-      // Tốc độ gõ thay đổi (giống người thật)
-      // Nhanh: 50-120ms, Bình thường: 100-200ms, Chậm: 150-350ms
-      const typingStyle = Math.random();
-      let delay;
-      if (typingStyle < 0.3) {
-        delay = randomBetween(50, 120);   // gõ nhanh
-      } else if (typingStyle < 0.8) {
-        delay = randomBetween(100, 200);  // bình thường
-      } else {
-        delay = randomBetween(150, 350);  // gõ chậm (suy nghĩ)
-      }
-
-      // Dấu cách (space) thường dừng lâu hơn 1 chút
-      if (char === ' ') {
-        delay += randomBetween(30, 100);
-      }
-
-      // Sau dấu chấm, phẩy, chấm hỏi → dừng lâu hơn (đọc lại)
-      if ('.!?…'.includes(char)) {
-        delay += randomBetween(200, 600);
-      }
-
-      await sleep(delay);
+      await sleep(getTypingDelay(char, nextChar, prevChar));
     }
   }
 

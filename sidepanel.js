@@ -89,6 +89,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     queueCount.textContent = config.commentQueue?.length || config.queue?.length || 0;
     tweetsCount.textContent = config.myTweets?.length || 0;
 
+    // Hourly count
+    const hourlyEl = document.getElementById('hourlyCount');
+    if (hourlyEl) hourlyEl.textContent = config.hourlyCount || 0;
+
     // Tweets list
     renderTweetsList();
 
@@ -120,6 +124,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     skipOwn.checked = config.skipOwnReplies !== false;
     humanTyping.checked = config.humanTyping !== false;
     myUsernameInput.value = config.myUsername || '';
+
+    // New smart settings
+    const smartSkipEl = document.getElementById('smartSkip');
+    const humanImpEl = document.getElementById('humanImperfections');
+    const smartTimingEl = document.getElementById('smartTiming');
+    const skipChanceEl = document.getElementById('skipChance');
+    if (smartSkipEl) smartSkipEl.checked = config.smartSkip !== false;
+    if (humanImpEl) humanImpEl.checked = config.humanImperfections !== false;
+    if (smartTimingEl) smartTimingEl.checked = config.smartTiming !== false;
+    if (skipChanceEl) skipChanceEl.value = Math.round((config.skipChance || 0.12) * 100);
 
     // Activity logs
     activityLogs = config.activityLogs || [];
@@ -363,7 +377,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       blacklistKeywords,
       skipReplies: skipReplies.checked,
       skipOwnReplies: skipOwn.checked,
-      humanTyping: humanTyping.checked
+      humanTyping: humanTyping.checked,
+      smartSkip: document.getElementById('smartSkip')?.checked ?? true,
+      humanImperfections: document.getElementById('humanImperfections')?.checked ?? true,
+      smartTiming: document.getElementById('smartTiming')?.checked ?? true,
+      skipChance: (parseInt(document.getElementById('skipChance')?.value) || 12) / 100
     };
 
     await saveConfig(newData);
@@ -468,9 +486,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       totalCount.textContent = msg.stats?.totalReplies || 0;
       queueCount.textContent = msg.queue || 0;
       tweetsCount.textContent = msg.tweets || 0;
+      const hourlyEl = document.getElementById('hourlyCount');
+      if (hourlyEl) hourlyEl.textContent = msg.hourlyCount || 0;
     }
     if (msg.action === 'replyPosted') {
-      addLog(`✅ Đã reply @${msg.username}: "${msg.reply?.substring(0, 40)}..."`, 'success');
+      const analysisInfo = msg.analysis ? ` [${msg.analysis.commentType}/${msg.analysis.sentiment}]` : '';
+      addLog(`✅ Đã reply @${msg.username}: "${msg.reply?.substring(0, 40)}..."${analysisInfo}`, 'success');
     }
     if (msg.action === 'replyError') {
       addLog(`❌ Lỗi reply: ${msg.error}`, 'error');
@@ -498,6 +519,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         queueCount.textContent = res.queue || 0;
         tweetsCount.textContent = res.tweets || 0;
       }
+      const hourlyEl = document.getElementById('hourlyCount');
+      if (hourlyEl) hourlyEl.textContent = res?.hourlyCount || 0;
       // Update account info
       if (res?.myUsername) {
         accountHandle.textContent = `@${res.myUsername}`;

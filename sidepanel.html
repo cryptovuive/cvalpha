@@ -59,6 +59,10 @@
           <div class="stat-value" id="tweetsCount">0</div>
           <div class="stat-label">Bài viết</div>
         </div>
+        <div class="stat-card">
+          <div class="stat-value" id="hourlyCount">0</div>
+          <div class="stat-label">Giờ này</div>
+        </div>
       </div>
 
       <!-- Account Info -->
@@ -285,8 +289,25 @@
           </label>
           <label class="checkbox">
             <input type="checkbox" id="humanTyping" checked>
-            <span>🤖➡️👤 Gõ như người thật (suy nghĩ, gõ sai, sửa)</span>
+            <span>🤖➡️👤 Gõ như người thật</span>
           </label>
+          <label class="checkbox">
+            <input type="checkbox" id="smartSkip" checked>
+            <span>🧠 Skip comment không cần reply</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="humanImperfections" checked>
+            <span>✏️ Viết tự nhiên (typo, filler words)</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="smartTiming" checked>
+            <span>⏱️ Delay thông minh theo context</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Random skip chance (%)</label>
+          <input type="number" id="skipChance" min="0" max="50" value="12">
+          <div class="hint">% chance bỏ qua comment ngẫu nhiên (giống người thật, không reply hết). 0 = tắt.</div>
         </div>
       </div>
 

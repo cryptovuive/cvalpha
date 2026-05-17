@@ -75,6 +75,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       totalReplies.textContent = res.stats.totalReplies || 0;
       queueCount.textContent = res.queue || 0;
     }
+    const hourlyEl = document.getElementById('hourlyCount');
+    if (hourlyEl) hourlyEl.textContent = res?.hourlyCount || 0;
   });
 
   // ---- Event Listeners ----

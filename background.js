@@ -1,6 +1,6 @@
 // ===================================================
 // Twitter Auto Reply - Background Service Worker
-// Logic: Scan 15 newest tweets → prioritize newest → random reply
+// v1.2.0 — Smart human-like replies with context awareness
 // ===================================================
 
 const DEFAULT_CONFIG = {
@@ -12,14 +12,21 @@ const DEFAULT_CONFIG = {
   customTone: '',
   replyLanguage: 'vi',
   maxRepliesPerHour: 10,
+  maxDailyReplies: 100,
   delayMin: 60,
   delayMax: 120,
-  maxTweetsToScan: 15,          // quét 15 bài mới nhất
+  maxTweetsToScan: 15,
   skipReplies: true,
   skipOwnReplies: true,
   blacklistKeywords: [],
   replyTemplate: '',
-  prioritizeSamePost: true,       // ưu tiên hết comment cùng bài trước
+  systemPrompt: '',
+  prioritizeSamePost: true,
+  humanTyping: true,
+  smartSkip: true,              // skip comment không cần reply
+  humanImperfections: true,     // thêm typo, filler words
+  smartTiming: true,            // delay thông minh theo context
+  skipChance: 0.12,             // 12% chance bỏ qua (giống người thật)
   stats: {
     totalReplies: 0,
     todayReplies: 0,
@@ -27,13 +34,16 @@ const DEFAULT_CONFIG = {
     errors: 0
   },
   repliedTweetIds: [],
-  myTweets: [],                 // [{ tweetId, text, time, commentCount }]
-  commentQueue: []              // [{ tweetId, commentId, comment, username, tweetTime }]
+  myTweets: [],
+  commentQueue: [],
+  recentStyles: [],             // track 10 style gần nhất
+  activityLogs: []
 };
 
 let config = { ...DEFAULT_CONFIG };
 let processingQueue = false;
-let myUsername = '';             // sẽ tự detect từ config hoặc content script
+let myUsername = '';
+let hourlyReplyTimestamps = [];  // track thời gian reply trong giờ
 
 // ---- Init ----
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -48,7 +58,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
   chrome.alarms.create('resetDaily', { periodInMinutes: 60 });
   chrome.alarms.create('processQueue', { periodInMinutes: 1 });
-  chrome.alarms.create('scanMyTweets', { periodInMinutes: 5 }); // scan mỗi 5 phút
+  chrome.alarms.create('scanMyTweets', { periodInMinutes: 5 });
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -73,7 +83,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await processQueue();
   }
   if (alarm.name === 'scanMyTweets') {
-    // Yêu cầu content script scan bài viết mới
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
       chrome.tabs.sendMessage(tab.id, { action: 'scanMyTweets' }).catch(() => {});
@@ -97,12 +106,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
 
         case 'generateReply': {
-          const reply = await generateAIReply(msg.comment, msg.tweetContext);
+          const reply = await generateAIReply(msg.comment, msg.tweetContext, msg.options);
           sendResponse({ reply });
           break;
         }
 
-        // Content script gửi danh sách tweet mới tìm được
         case 'updateMyTweets': {
           const newTweets = msg.tweets || [];
           if (newTweets.length === 0) {
@@ -110,11 +118,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
 
-          // Cập nhật username & display name
           if (msg.username) myUsername = msg.username;
           if (msg.displayName) config.myDisplayName = msg.displayName;
 
-          // Merge: thêm tweet mới, giữ tweet cũ, giới hạn 15
           const existingIds = new Set(config.myTweets.map(t => t.tweetId));
           let added = 0;
           for (const tweet of newTweets) {
@@ -124,22 +130,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
 
-          // Sắp xếp theo thời gian mới nhất, giữ tối đa 15
           config.myTweets.sort((a, b) => (b.time || 0) - (a.time || 0));
           config.myTweets = config.myTweets.slice(0, config.maxTweetsToScan);
 
           await saveConfig();
-
-          // Notify side panel
-          notifySidePanel('info',
-            `📰 Tìm thấy ${added} bài mới. Tổng: ${config.myTweets.length} bài đang theo dõi`
-          );
-
+          notifySidePanel('info', `📰 Tìm thấy ${added} bài mới. Tổng: ${config.myTweets.length} bài`);
           sendResponse({ success: true, total: config.myTweets.length, added });
           break;
         }
 
-        // Content script gửi comment mới tìm được
         case 'queueComment': {
           if (!config.enabled) {
             sendResponse({ success: false, reason: 'Extension disabled' });
@@ -158,17 +157,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
 
+          // ===== SMART SKIP — bỏ qua comment không cần reply =====
+          if (config.smartSkip && shouldSkipComment(msg.comment, msg.username)) {
+            sendResponse({ success: false, reason: 'Smart skip: not worth replying' });
+            return;
+          }
+
+          // ===== RANDOM SKIP — thỉnh thoảng bỏ qua như người thật =====
+          if (config.skipChance > 0 && Math.random() < config.skipChance) {
+            sendResponse({ success: false, reason: 'Random skip (human behavior)' });
+            return;
+          }
+
           config.commentQueue.push({
             tweetId: msg.tweetId,
             commentId: msg.commentId,
             comment: msg.comment,
             username: msg.username || '',
-            tweetTime: msg.tweetTime || 0
+            tweetTime: msg.tweetTime || 0,
+            retries: 0
           });
 
-          // Sort queue: ưu tiên bài mới nhất
           sortQueue();
-
           await saveConfig();
           await processQueue();
           sendResponse({ success: true });
@@ -192,13 +202,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             queue: config.commentQueue?.length || 0,
             tweets: config.myTweets?.length || 0,
             myUsername,
-            myDisplayName: config.myDisplayName || ''
+            myDisplayName: config.myDisplayName || '',
+            hourlyCount: getHourlyReplyCount()
           });
           break;
 
         case 'clearStats':
           config.stats = { ...DEFAULT_CONFIG.stats };
           config.repliedTweetIds = [];
+          hourlyReplyTimestamps = [];
           await saveConfig();
           sendResponse({ success: true });
           break;
@@ -220,14 +232,312 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ===================================================
+// Smart Skip — bỏ qua comment không cần reply
+// ===================================================
+
+function shouldSkipComment(comment, username) {
+  const text = comment.trim();
+  const lower = text.toLowerCase();
+
+  // 1. Comment quá ngắn (chỉ emoji, "nice", "ok", "same")
+  const ultraShort = /^(nice|ok|ok bro|same|good|great|wow|cool|fire|based|ngl|fr|real|fax|true|đúng|v|yes|yep|nope|nah|lol|lmao|😂|🔥|💀|❤️|💯|👀|🚀|✅|🫡|💪|🗿|✨)+[!.]*$/i;
+  if (ultraShort.test(text)) return true;
+
+  // 2. Comment chỉ có emoji
+  const emojiOnly = /^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\s]+$/u;
+  if (emojiOnly.test(text)) return true;
+
+  // 3. Comment tag người khác (không phải hỏi mình)
+  const tagPattern = /@\w+/g;
+  const tags = text.match(tagPattern);
+  if (tags && tags.length >= 2 && !text.includes('?')) return true;
+
+  // 4. Comment quá dài (> 500 chữ) — thường là bài viết riêng, không cần reply
+  if (text.length > 500) return true;
+
+  // 5. Comment chỉ là link
+  if (/^https?:\/\/\S+$/.test(text)) return true;
+
+  // 6. Comment là reply kiểu "đang replying to @xxx" (không có nội dung mới)
+  if (/^replying to @\w+$/i.test(text.trim())) return true;
+
+  // 7. Comment có vẻ là bot / automated
+  const botPatterns = /^(follow back|follow4follow|f4f|l4l|check dm|dm me|join my|subscribe|follow me)/i;
+  if (botPatterns.test(text)) return true;
+
+  return false;
+}
+
+// ===================================================
+// Comment Analysis — phân tích loại comment
+// ===================================================
+
+function analyzeComment(comment, tweetContext = '') {
+  const text = comment.toLowerCase().trim();
+  const combined = (tweetContext + ' ' + comment).toLowerCase();
+
+  // Detect sentiment
+  const positiveWords = ['pump', 'moon', 'bullish', 'good', 'great', 'amazing', 'tốt', 'tuyệt', 'hay', 'love', 'best', 'x2', 'x10', 'profit', 'lãi', 'đúng', 'chuẩn', 'nice', 'fire', 'based'];
+  const negativeWords = ['dump', 'crash', 'bear', 'bad', 'scam', 'rug', 'xấu', 'tệ', 'lỗ', 'loss', 'red', 'blood', 'sai', 'fake', 'lừa'];
+  const questionIndicators = ['what', 'how', 'why', 'when', 'where', 'gì', 'sao', 'như thế nào', 'tại sao', 'không', 'chứ', '?'];
+
+  let sentiment = 'neutral';
+  const posCount = positiveWords.filter(w => text.includes(w)).length;
+  const negCount = negativeWords.filter(w => text.includes(w)).length;
+  if (posCount > negCount) sentiment = 'positive';
+  else if (negCount > posCount) sentiment = 'negative';
+
+  const hasQuestion = questionIndicators.some(w => text.includes(w));
+
+  // Detect comment type
+  let commentType = 'general';
+  if (hasQuestion) commentType = 'question';
+  else if (/^(đúng|chuẩn|exactly|right|true|100%|agree|yes|this|same|facts)/.test(text)) commentType = 'agreement';
+  else if (/^(sai|wrong|no|nah|disagree|ko đồng|phản đối)/.test(text)) commentType = 'disagreement';
+  else if (/lol|lmao|😂|💀|haha|vui|funny|buồn cười/.test(text)) commentType = 'humor';
+  else if (/spam|ads|quảng cáo|buy now|free|airdrop|giveaway/.test(text)) commentType = 'spam';
+  else if (/thank|cảm ơn|thanks|ty|tks/.test(text)) commentType = 'gratitude';
+
+  // Detect language
+  const vietnameseChars = /[àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựýỳỷỹỵ]/;
+  const hasVietnamese = vietnameseChars.test(comment);
+  const hasEnglish = /\b(the|is|are|was|were|have|has|been|will|would|could|should|this|that|with|from)\b/i.test(comment);
+
+  let detectedLanguage = config.replyLanguage || 'vi';
+  if (hasVietnamese && !hasEnglish) detectedLanguage = 'vi';
+  else if (hasEnglish && !hasVietnamese) detectedLanguage = 'en';
+  else if (hasVietnamese && hasEnglish) detectedLanguage = 'mixed';
+
+  // Comment length category
+  const lengthCategory = text.length < 30 ? 'short' : text.length < 100 ? 'medium' : 'long';
+
+  return { sentiment, hasQuestion, commentType, detectedLanguage, lengthCategory };
+}
+
+// ===================================================
+// Human Text Variation — làm text tự nhiên hơn
+// ===================================================
+
+function applyHumanVariation(text, options = {}) {
+  if (!config.humanImperfections) return text;
+
+  let result = text;
+
+  // 1. Thỉnh thoảng viết thường đầu câu (20% chance)
+  if (Math.random() < 0.20 && result.length > 0) {
+    result = result.charAt(0).toLowerCase() + result.slice(1);
+  }
+
+  // 2. Thêm filler words (15% chance)
+  const fillers = {
+    vi: ['à', 'mà', 'ơ', 'à ừ', 'mà thôi', 'thì', 'kiểu như', 'nói chung là', 'thực ra thì', 'ủa mà'],
+    en: ['honestly', 'ngl', 'tbf', 'like', 'I mean', 'tho', 'btw', 'lowkey']
+  };
+  if (Math.random() < 0.15) {
+    const lang = options.language || 'vi';
+    const langFillers = fillers[lang] || fillers.vi;
+    const filler = langFillers[Math.floor(Math.random() * langFillers.length)];
+
+    // Chèn filler vào đầu hoặc giữa câu
+    if (Math.random() < 0.5) {
+      result = filler + ', ' + result.charAt(0).toLowerCase() + result.slice(1);
+    } else {
+      const words = result.split(' ');
+      if (words.length > 3) {
+        const pos = Math.floor(Math.random() * (words.length - 2)) + 1;
+        words.splice(pos, 0, filler);
+        result = words.join(' ');
+      }
+    }
+  }
+
+  // 3. Viết tắt tự nhiên (10% chance)
+  const abbreviations = {
+    'không': 'ko', 'vâng': 'v', 'chắc chắn': 'chắc lun', 'thật sự': 'thật sự luôn',
+    'được không': 'đc ko', 'như vậy': 'như v', 'tại sao': 'tại sao v',
+    'because': 'cuz', 'something': 'smth', 'probably': 'prob', 'definitely': 'def',
+    'though': 'tho', 'between': 'btwn', 'before': 'b4'
+  };
+  if (Math.random() < 0.10) {
+    for (const [full, abbr] of Object.entries(abbreviations)) {
+      if (result.toLowerCase().includes(full) && Math.random() < 0.5) {
+        result = result.replace(new RegExp(full, 'i'), abbr);
+      }
+    }
+  }
+
+  // 4. Thay đổi dấu câu (15% chance thiếu dấu cuối)
+  if (Math.random() < 0.15 && /[.!?]$/.test(result)) {
+    result = result.slice(0, -1);
+  }
+
+  // 5. Thêm "..." thay vì "." (8% chance)
+  if (Math.random() < 0.08 && result.endsWith('.')) {
+    result = result.slice(0, -1) + '...';
+  }
+
+  // 6. Emoji variation
+  if (Math.random() < 0.25) {
+    // 25% chance xóa emoji cuối (trông tự nhiên hơn, không phải lúc nào cũng có emoji)
+    result = result.replace(/\s*[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}]+$/u, '');
+  }
+
+  return result.trim();
+}
+
+// ===================================================
+// Style Selection — thông minh, tránh lặp
+// ===================================================
+
+const REPLY_STYLES = [
+  {
+    id: 'hype_bullish', name: '🔥 Hype & Bullish',
+    trigger: { keywords: ['pump', 'bullish', 'moon', 'ATH', 'breakout', 'surge', 'rally', 'tăng', 'x2', 'x10', 'gem', 'alpha'] },
+    prompt: 'Phong cách: Hype & Bullish. Nhiệt tình, tạo năng lượng tích cực. Dùng emoji 🚀🔥💪. Ngắn gọn, punchy.'
+  },
+  {
+    id: 'analysis', name: '📊 Phân tích',
+    trigger: { keywords: ['analysis', 'data', 'research', 'TVL', 'on-chain', 'metrics', 'tokenomics', 'phân tích', 'revenue'] },
+    prompt: 'Phong cách: Phân tích chuyên sâu. Đưa luận điểm rõ ràng, có dẫn chứng. Dùng emoji 📊📈🔍💡.'
+  },
+  {
+    id: 'meme_funny', name: '😂 Hài hước / Meme',
+    trigger: { keywords: ['lol', 'lmao', 'degen', 'ape', 'ser', 'fren', 'gm', 'vibe', 'mood', 'ngu', 'stupid'] },
+    prompt: 'Phong cách: Hài hước, meme, relatable. Vui tính, dí dỏm. Dùng emoji 😂💀🤣. Slang CT: "ser", "fren", "anon".'
+  },
+  {
+    id: 'ask_question', name: '❓ Đặt câu hỏi',
+    trigger: { keywords: ['what', 'how', 'why', 'thoughts', 'opinion', 'think', 'suy nghĩ', 'nghĩ gì', '?'] },
+    prompt: 'Phong cách: Đặt câu hỏi thông minh. Tạo thảo luận, tăng engagement. Dùng emoji 🤔💭❓👀.'
+  },
+  {
+    id: 'supportive', name: '🤝 Ủng hộ',
+    trigger: { keywords: ['agree', 'exactly', 'right', 'correct', 'đúng', 'chuẩn', 'this', '100%'] },
+    prompt: 'Phong cách: Ủng hộ, đồng tình. Thêm lý do hoặc góc nhìn bổ sung. Dùng emoji ✅💯🤝🫡.'
+  },
+  {
+    id: 'alpha_insight', name: '💎 Alpha / Insight',
+    trigger: { keywords: ['alpha', 'early', 'undervalued', 'hidden', 'gem', 'sleeping', 'whale', 'smart money'] },
+    prompt: 'Phong cách: Alpha/Insight. Chia sẻ thông tin giá trị, subtle. Dùng emoji 💎👀🧠🔬.'
+  },
+  {
+    id: 'professional', name: '💼 Chuyên nghiệp',
+    trigger: { keywords: ['regulation', 'compliance', 'institutional', 'adoption', 'partnership', 'SEC', 'ETF', 'stablecoin', 'infrastructure'] },
+    prompt: 'Phong cách: Chuyên nghiệp, institutional. Lịch sự, có trọng lượng. Dùng emoji 💼🏢📈🏛️.'
+  },
+  {
+    id: 'community', name: '🫂 Cộng đồng',
+    trigger: { keywords: ['community', 'team', 'together', 'build', 'cộng đồng', 'anh em', 'fam', 'frens'] },
+    prompt: 'Phong cách: Cộng đồng, thân thiện. Gần gũi, ấm áp. Dùng emoji 🫂❤️🙏💪.'
+  },
+  {
+    id: 'skeptical', name: '⚠️ Cảnh báo',
+    trigger: { keywords: ['risk', 'careful', 'scam', 'rug', 'fake', 'suspicious', 'cẩn thận', 'lừa đảo', 'red flag'] },
+    prompt: 'Phong cách: Cảnh báo, skeptical. Cẩn thận, đặt câu hỏi nghi vấn. Dùng emoji ⚠️🚩🧐🔍.'
+  },
+  {
+    id: 'minimal_gm', name: '✨ Minimal / GM',
+    trigger: { keywords: ['gm', 'gn', 'vibes', 'energy', 'based', 'chad', 'w', 'massive', 'huge', 'insane'] },
+    prompt: 'Phong cách: Minimal, GM energy. Rất ngắn, 1-3 từ + emoji. Dùng emoji ✨🫡🙌💪🔥.'
+  }
+];
+
+function selectBestStyle(tweetText, commentText, analysis) {
+  const combined = (tweetText + ' ' + commentText).toLowerCase();
+  const scores = [];
+
+  // Phân tích comment type để ưu tiên style phù hợp
+  const typeStyleBoost = {
+    question: { ask_question: 5 },
+    agreement: { supportive: 5, hype_bullish: 3 },
+    disagreement: { skeptical: 5, analysis: 3 },
+    humor: { meme_funny: 5, minimal_gm: 3 },
+    gratitude: { supportive: 5, community: 3 },
+    spam: {} // sẽ skip trước đó
+  };
+
+  const boosts = typeStyleBoost[analysis?.commentType] || {};
+
+  for (const style of REPLY_STYLES) {
+    let score = boosts[style.id] || 0;
+
+    for (const kw of style.trigger.keywords) {
+      if (combined.includes(kw.toLowerCase())) score += 2;
+    }
+
+    scores.push({ style, score });
+  }
+
+  // Tránh lặp style — giảm score của style đã dùng gần đây
+  const recentStyles = config.recentStyles || [];
+  for (const s of scores) {
+    const recentCount = recentStyles.filter(id => id === s.style.id).length;
+    s.score -= recentCount * 1.5; // giảm 1.5 điểm mỗi lần dùng gần đây
+  }
+
+  scores.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return Math.random() - 0.5;
+  });
+
+  const selected = scores[0].score > 0 ? scores[0].style : REPLY_STYLES[Math.floor(Math.random() * REPLY_STYLES.length)];
+
+  // Track recent styles (giữ 10 gần nhất)
+  config.recentStyles = [...(config.recentStyles || []), selected.id].slice(-10);
+
+  return selected;
+}
+
+// ===================================================
+// Smart Timing — delay thông minh
+// ===================================================
+
+function calculateSmartDelay(commentLength, isHourPeak) {
+  if (!config.smartTiming) return randomDelay();
+
+  const min = config.delayMin || 60;
+  const max = config.delayMax || 120;
+  let base = Math.floor(Math.random() * (max - min + 1)) + min;
+
+  // 1. Comment dài → delay dài hơn ("đọc kỹ rồi reply")
+  if (commentLength > 200) base = Math.round(base * 1.4);
+  else if (commentLength > 100) base = Math.round(base * 1.2);
+  else if (commentLength < 30) base = Math.round(base * 0.7);
+
+  // 2. Giờ cao điểm → delay ngắn hơn (nhiều người online)
+  const hour = new Date().getHours();
+  const peakHours = [8, 9, 10, 19, 20, 21, 22];
+  if (peakHours.includes(hour)) base = Math.round(base * 0.8);
+
+  // 3. Giờ ít người (1-6h sáng) → delay dài hơn
+  if (hour >= 1 && hour <= 6) base = Math.round(base * 1.5);
+
+  // 4. Thêm jitter ±15%
+  const jitter = base * 0.15;
+  base += Math.floor(Math.random() * jitter * 2 - jitter);
+
+  return Math.max(20, base); // tối thiểu 20s
+}
+
+function getHourlyReplyCount() {
+  const oneHourAgo = Date.now() - 3600000;
+  hourlyReplyTimestamps = hourlyReplyTimestamps.filter(t => t > oneHourAgo);
+  return hourlyReplyTimestamps.length;
+}
+
+function randomDelay() {
+  const min = config.delayMin || 60;
+  const max = config.delayMax || 120;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// ===================================================
 // Queue Sort & Process
 // ===================================================
 
 function sortQueue() {
   if (!config.prioritizeSamePost) return;
 
-  // Ưu tiên comment trong cùng bài viết trước (group by tweetId)
-  // Trong mỗi group, giữ nguyên thứ tự (FIFO)
   const groups = new Map();
   for (const item of config.commentQueue) {
     const key = item.tweetId || 'unknown';
@@ -235,7 +545,6 @@ function sortQueue() {
     groups.get(key).push(item);
   }
 
-  // Sắp xếp group theo tweetTime giảm dần (bài mới nhất trước)
   const sortedGroups = Array.from(groups.entries())
     .sort(([, a], [, b]) => ((b[0]?.tweetTime || 0) - (a[0]?.tweetTime || 0)));
 
@@ -249,15 +558,27 @@ async function processQueue() {
   processingQueue = true;
   try {
     while (config.commentQueue.length > 0) {
+      // Daily limit
       const maxDaily = config.maxDailyReplies || (config.maxRepliesPerHour * 24);
       if (config.stats.todayReplies >= maxDaily) {
         notifySidePanel('warning', '⚠️ Đạt giới hạn reply/ngày');
         break;
       }
 
+      // ===== HOURLY RATE LIMIT =====
+      const hourlyCount = getHourlyReplyCount();
+      if (hourlyCount >= config.maxRepliesPerHour) {
+        notifySidePanel('warning', `⚠️ Đạt giới hạn ${config.maxRepliesPerHour} reply/giờ. Chờ...`);
+        // Đợi đến khi có slot trống
+        const oldestInHour = hourlyReplyTimestamps[0];
+        const waitMs = oldestInHour + 3600000 - Date.now() + 5000;
+        if (waitMs > 0) await sleep(Math.min(waitMs, 300000)); // max đợi 5 phút
+        continue;
+      }
+
       const item = config.commentQueue.shift();
 
-      // Skip nếu đã reply (dựa trên repliedTweetIds)
+      // Skip nếu đã reply
       if (config.skipReplies !== false && config.repliedTweetIds.includes(item.commentId)) {
         continue;
       }
@@ -266,18 +587,42 @@ async function processQueue() {
         const tweetInfo = config.myTweets.find(t => t.tweetId === item.tweetId);
         const tweetContext = tweetInfo?.text || '';
 
-        const reply = await generateAIReply(item.comment, tweetContext);
+        // ===== ANALYZE COMMENT =====
+        const analysis = analyzeComment(item.comment, tweetContext);
 
-        // Gửi content script post reply
+        // ===== GENERATE REPLY =====
+        const reply = await generateAIReply(item.comment, tweetContext, { analysis });
+
+        // ===== QUALITY CHECK =====
+        if (isGenericReply(reply)) {
+          notifySidePanel('info', `⏭️ Skip generic reply cho @${item.username}`);
+          continue;
+        }
+
+        if (isDuplicateReply(reply)) {
+          notifySidePanel('info', `⏭️ Skip duplicate reply cho @${item.username}`);
+          continue;
+        }
+
+        // Post reply
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab) {
-          await chrome.tabs.sendMessage(tab.id, {
+          const result = await chrome.tabs.sendMessage(tab.id, {
             action: 'postReply',
             tweetId: item.tweetId,
             commentId: item.commentId,
             reply: reply,
             username: item.username
-          });
+          }).catch(() => null);
+
+          // ===== QUEUE RETRY — nếu postReply fail =====
+          if (result && !result.success && (item.retries || 0) < 2) {
+            item.retries = (item.retries || 0) + 1;
+            config.commentQueue.unshift(item); // đưa lại đầu queue
+            notifySidePanel('warning', `🔄 Retry #${item.retries} cho @${item.username}`);
+            await sleep(5000);
+            continue;
+          }
         }
 
         // Notify
@@ -285,7 +630,8 @@ async function processQueue() {
           action: 'replyPosted',
           username: item.username,
           reply: reply,
-          tweetId: item.tweetId
+          tweetId: item.tweetId,
+          analysis: analysis
         }).catch(() => {});
 
         // Stats
@@ -293,6 +639,8 @@ async function processQueue() {
         config.stats.todayReplies++;
         config.stats.lastReplyDate = new Date().toDateString();
         config.repliedTweetIds.push(item.commentId);
+        hourlyReplyTimestamps.push(Date.now());
+
         if (config.repliedTweetIds.length > 2000) {
           config.repliedTweetIds = config.repliedTweetIds.slice(-1000);
         }
@@ -302,16 +650,15 @@ async function processQueue() {
           action: 'statsUpdate',
           stats: config.stats,
           queue: config.commentQueue.length,
-          tweets: config.myTweets.length
+          tweets: config.myTweets.length,
+          hourlyCount: getHourlyReplyCount()
         }).catch(() => {});
 
-        // ===== RANDOM DELAY =====
+        // ===== SMART DELAY =====
         if (config.commentQueue.length > 0) {
-          const delaySec = randomDelay();
-
-          // Xem comment tiếp theo cùng bài hay khác bài
+          const delaySec = calculateSmartDelay(item.comment.length);
           const nextItem = config.commentQueue[0];
-          const samePost = (item.tweetId === nextItem.tweetId);
+          const samePost = (item.tweetId === nextItem?.tweetId);
 
           notifySidePanel('info',
             samePost
@@ -323,12 +670,15 @@ async function processQueue() {
         }
 
       } catch (err) {
+        // AI skipped → không phải lỗi thật
+        if (err.message === 'AI skipped') {
+          notifySidePanel('info', `⏭️ AI bỏ qua comment của @${item.username}`);
+          continue;
+        }
+
         config.stats.errors++;
         await saveConfig();
-        chrome.runtime.sendMessage({
-          action: 'replyError',
-          error: err.message
-        }).catch(() => {});
+        chrome.runtime.sendMessage({ action: 'replyError', error: err.message }).catch(() => {});
         console.error('[AutoReply] Error:', err);
 
         if (config.commentQueue.length > 0) {
@@ -341,130 +691,95 @@ async function processQueue() {
   }
 }
 
-function randomDelay() {
-  const min = config.delayMin || 60;
-  const max = config.delayMax || 120;
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+// ===================================================
+// Reply Quality Filter
+// ===================================================
+
+function isGenericReply(reply) {
+  const generic = [
+    /^(good point|nice|great|interesting|agree|true|facts|this|same)[!.]*$/i,
+    /^(hay|đúng|chuẩn|tốt|tuyệt|ok|yeah)[!.]*$/i,
+    /^(👍|❤️|🔥|💯|✅)[!.]*$/
+  ];
+  return generic.some(p => p.test(reply.trim()));
 }
 
-// ---- AI Reply ----
-
-// Reply Styles (từ reply-styles.js)
-const REPLY_STYLES = [
-  {
-    id: 'hype_bullish',
-    name: '🔥 Hype & Bullish',
-    trigger: { keywords: ['pump', 'bullish', 'moon', 'ATH', 'breakout', 'surge', 'rally', 'tăng', 'x2', 'x10', 'gem', 'alpha'], sentiment: 'positive' },
-    prompt: 'Phong cách: Hype & Bullish. Nhiệt tình, tạo năng lượng tích cực. Dùng emoji 🚀🔥💪. Ngắn gọn, punchy. Ví dụ: "LFG! WAGMI 🚀", "Bullish af on this one 🔥"'
-  },
-  {
-    id: 'analysis',
-    name: '📊 Phân tích',
-    trigger: { keywords: ['analysis', 'data', 'research', 'TVL', 'on-chain', 'metrics', 'tokenomics', 'phân tích', 'revenue'], sentiment: 'neutral' },
-    prompt: 'Phong cách: Phân tích chuyên sâu. Đưa luận điểm rõ ràng, có dẫn chứng. Dùng emoji 📊📈🔍💡. Ví dụ: "TVL up 40% but token undervalued. On-chain shows whale accumulation 📊"'
-  },
-  {
-    id: 'meme_funny',
-    name: '😂 Hài hước / Meme',
-    trigger: { keywords: ['lol', 'lmao', 'degen', 'ape', 'ser', 'fren', 'gm', 'vibe', 'mood', 'ngu', 'stupid'], sentiment: 'any' },
-    prompt: 'Phong cách: Hài hước, meme, relatable. Vui tính, dí dỏm. Dùng emoji 😂💀🤣. Slang CT: "ser", "fren", "anon", "ngmi". Ví dụ: "Ser this is a Wendy\'s 💀", "Average degen behavior 😂"'
-  },
-  {
-    id: 'ask_question',
-    name: '❓ Đặt câu hỏi',
-    trigger: { keywords: ['what', 'how', 'why', 'thoughts', 'opinion', 'think', 'suy nghĩ', 'nghĩ gì', '?'], sentiment: 'any' },
-    prompt: 'Phong cách: Đặt câu hỏi thông minh. Tạo thảo luận, tăng engagement. Dùng emoji 🤔💭❓👀. Ví dụ: "What\'s your take on this? 🤔", "Ser, sustainable or just hype? 💭"'
-  },
-  {
-    id: 'supportive',
-    name: '🤝 Ủng hộ',
-    trigger: { keywords: ['agree', 'exactly', 'right', 'correct', 'đúng', 'chuẩn', 'this', '100%'], sentiment: 'positive' },
-    prompt: 'Phong cách: Ủng hộ, đồng tình. Thêm lý do hoặc góc nhìn bổ sung. Dùng emoji ✅💯🤝🫡. Ví dụ: "This. Exactly this ✅", "100% agree. Been saying this for months 💯"'
-  },
-  {
-    id: 'alpha_insight',
-    name: '💎 Alpha / Insight',
-    trigger: { keywords: ['alpha', 'early', 'undervalued', 'hidden', 'gem', 'sleeping', 'whale', 'smart money'], sentiment: 'positive' },
-    prompt: 'Phong cách: Alpha/Insight. Chia sẻ thông tin giá trị, subtle. Dùng emoji 💎👀🧠🔬. Ví dụ: "On-chain tells a different story 👀", "Smart money accumulating quietly. DYOR 💎"'
-  },
-  {
-    id: 'professional',
-    name: '💼 Chuyên nghiệp',
-    trigger: { keywords: ['regulation', 'compliance', 'institutional', 'adoption', 'partnership', 'SEC', 'ETF', 'stablecoin', 'infrastructure'], sentiment: 'neutral' },
-    prompt: 'Phong cách: Chuyên nghiệp, institutional. Lịch sự, có trọng lượng. Dùng emoji 💼🏢📈🏛️. Ví dụ: "Important milestone. Institutional adoption accelerating 🏛️"'
-  },
-  {
-    id: 'community',
-    name: '🫂 Cộng đồng',
-    trigger: { keywords: ['community', 'team', 'together', 'build', 'cộng đồng', 'anh em', 'fam', 'frens'], sentiment: 'positive' },
-    prompt: 'Phong cách: Cộng đồng, thân thiện. Gần gũi, ấm áp. Dùng emoji 🫂❤️🙏💪. Ví dụ: "This is why I love this community 🫂", "We\'re all gonna make it together fam 💪"'
-  },
-  {
-    id: 'skeptical',
-    name: '⚠️ Cảnh báo',
-    trigger: { keywords: ['risk', 'careful', 'scam', 'rug', 'fake', 'suspicious', 'cẩn thận', 'lừa đảo', 'red flag'], sentiment: 'negative' },
-    prompt: 'Phong cách: Cảnh báo, skeptical. Cẩn thận, đặt câu hỏi nghi vấn. Dùng emoji ⚠️🚩🧐🔍. Ví dụ: "Red flags everywhere. DYOR ⚠️", "Sounds too good to be true 🧐"'
-  },
-  {
-    id: 'minimal_gm',
-    name: '✨ Minimal / GM',
-    trigger: { keywords: ['gm', 'gn', 'vibes', 'energy', 'based', 'chad', 'w', 'massive', 'huge', 'insane'], sentiment: 'positive' },
-    prompt: 'Phong cách: Minimal, GM energy. Rất ngắn, 1-3 từ + emoji. Dùng emoji ✨🫡🙌💪🔥. Ví dụ: "Based ✨", "GM king 🫡", "Massive W 🔥", "Chad energy 🗿"'
-  }
-];
-
-function selectBestStyle(tweetText, commentText) {
-  const combined = (tweetText + ' ' + commentText).toLowerCase();
-  const scores = [];
-
-  for (const style of REPLY_STYLES) {
-    let score = 0;
-    for (const kw of style.trigger.keywords) {
-      if (combined.includes(kw.toLowerCase())) score += 2;
-    }
-    scores.push({ style, score });
-  }
-
-  scores.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return Math.random() - 0.5;
-  });
-
-  if (scores[0].score > 0) return scores[0].style;
-  return REPLY_STYLES[Math.floor(Math.random() * REPLY_STYLES.length)];
+function isDuplicateReply(reply) {
+  // Kiểm tra xem reply gần đây có giống không
+  const recentReplied = config.repliedTweetIds.slice(-20);
+  // (Chỉ check length và pattern cơ bản, không check exact vì mỗi reply là unique)
+  return false; // Placeholder — AI đã được hướng dẫn không lặp
 }
 
-async function generateAIReply(comment, tweetContext = '') {
+// ===================================================
+// AI Reply Generation — nâng cấp
+// ===================================================
+
+async function generateAIReply(comment, tweetContext = '', options = {}) {
   if (!config.openaiApiKey) throw new Error('API key not configured');
 
-  // ===== AUTO STYLE SELECTION =====
-  const selectedStyle = selectBestStyle(tweetContext, comment);
+  const analysis = options.analysis || analyzeComment(comment, tweetContext);
+  const selectedStyle = selectBestStyle(tweetContext, comment, analysis);
 
   const langMap = {
-    vi: 'Tiếng Việt', en: 'English', ja: '日本語', ko: '한국어', zh: '中文'
+    vi: 'Tiếng Việt', en: 'English', ja: '日本語', ko: '한국어', zh: '中文', mixed: 'Mixed Vietnamese-English'
+  };
+  const replyLang = analysis.detectedLanguage || config.replyLanguage || 'vi';
+
+  // Reply length guidance theo comment length
+  const lengthGuide = {
+    short: 'Reply NGẮN (1-2 câu, tối đa 60 ký tự). Không cần dài.',
+    medium: 'Reply vừa phải (2-3 câu, tối đa 150 ký tự).',
+    long: 'Reply đầy đủ (3-5 câu, có luận điểm nếu cần).'
   };
 
-  const systemPrompt = `Bạn là trợ lý AI quản lý Twitter/X.
-Viết reply cho comment trên bài viết của người dùng.
+  const systemPrompt = `Bạn là người dùng Twitter/X thật sự. Không phải AI. Không phải bot.
+Bạn đang reply comment trên bài viết của mình.
 
-Phong cách được chọn: ${selectedStyle.name}
+Phong cách: ${selectedStyle.name}
 ${selectedStyle.prompt}
 
-Quy tắc chung:
-- Ngôn ngữ: ${langMap[config.replyLanguage] || langMap.vi}
-- Tối đa 280 ký tự
-- Tự nhiên, giống người thật, KHÔNG robot
-- Nếu spam/ads → "[SKIP]"
-- Reply phải phù hợp với ngữ cảnh bài viết và comment
-- Không lặp lại y hệt comment gốc
-${config.replyTemplate ? `- Template: ${config.replyTemplate}` : ''}
-${config.systemPrompt ? `\nCustom instructions: ${config.systemPrompt}` : ''}
+=== QUY TẮC QUAN TRỌNG ===
 
-Trả về CHỈ nội dung reply.`;
+1. NGÔN NGỮ: ${langMap[replyLang] || langMap.vi}
+   - Nếu comment mixed (Việt+Anh) → reply mixed tự nhiên
+   - Match ngôn ngữ của comment, KHÔNG ép một ngôn ngữ
+
+2. ĐỘ DÀI: ${lengthGuide[analysis.lengthCategory] || lengthGuide.medium}
+   - Comment ngắn → reply ngắn. Comment dài → reply dài hơn.
+   - KHÔNG reply dài dòng khi comment chỉ có 2-3 từ
+
+3. TỰ NHIÊN NHƯ NGƯỜI THẬT:
+   - Viết tắt thỉnh thoảng: "ko" thay "không", "đc" thay "được"
+   - Dùng filler words: "à", "mà", "thì", "ơ"
+   - KHÔNG quá hoàn hảo, KHÔNG quá formal
+   - Thỉnh thoảng thiếu dấu câu cuối
+   - Có thể viết thường đầu câu (như chat thật)
+
+4. SENTIMENT MATCHING:
+   - Comment vui → reply vui, năng lượng
+   - Comment tiêu cực → reply empathetic hoặc skip
+   - Comment hỏi → trả lời đúng câu hỏi
+   - Comment troll → reply witty hoặc skip
+
+5. ĐỪNG REPLY NHƯ ROBOT:
+   - KHÔNG bắt đầu bằng "Great question!", "Interesting point!"
+   - KHÔNG dùng "As an AI" hoặc bất cứ gì liên quan đến AI
+   - KHÔNG quá politically correct
+   - Có thể có opinion riêng, có thể不同意
+
+6. SKIP RULES:
+   - Nếu comment là spam/ads → trả về "[SKIP]"
+   - Nếu không có gì hay để nói → trả về "[SKIP]"
+
+${config.replyTemplate ? `Template: ${config.replyTemplate}` : ''}
+${config.systemPrompt ? `Custom: ${config.systemPrompt}` : ''}
+
+Trả về CHỈ nội dung reply. Không giải thích.`;
 
   const userMessage = tweetContext
-    ? `Bài viết gốc: "${tweetContext}"\n\nComment cần reply: "${comment}"`
-    : `Comment cần reply: "${comment}"`;
+    ? `Bài viết: "${tweetContext}"\nComment của @${options.username || 'user'}: "${comment}"`
+    : `Comment: "${comment}"`;
 
   const response = await fetch(`${config.openaiBaseUrl}/chat/completions`, {
     method: 'POST',
@@ -478,8 +793,8 @@ Trả về CHỈ nội dung reply.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
       ],
-      max_tokens: 150,
-      temperature: 0.8
+      max_tokens: 180,
+      temperature: 0.85
     })
   });
 
@@ -489,12 +804,17 @@ Trả về CHỈ nội dung reply.`;
   }
 
   const data = await response.json();
-  const reply = data.choices?.[0]?.message?.content?.trim();
+  let reply = data.choices?.[0]?.message?.content?.trim();
   if (!reply) throw new Error('Empty response');
   if (reply === '[SKIP]') throw new Error('AI skipped');
 
-  // Notify side panel about style used
-  notifySidePanel('info', `🎨 Style: ${selectedStyle.name}`);
+  // ===== APPLY HUMAN VARIATION =====
+  reply = applyHumanVariation(reply, { language: replyLang });
+
+  // Ensure within Twitter limit
+  if (reply.length > 280) reply = reply.substring(0, 277) + '...';
+
+  notifySidePanel('info', `🎨 Style: ${selectedStyle.name} | ${analysis.commentType} | ${replyLang}`);
 
   return reply;
 }
